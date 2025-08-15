@@ -3,14 +3,20 @@
 import { useEffect, useMemo, useState } from "react";
 
 async function postJSON(path, body) {
-  const res = await fetch(path, {
+  // Try POST first
+  let res = await fetch(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body)
+    body: JSON.stringify(body),
   });
+  // If the platform returns 405 (Method Not Allowed), retry as GET
+  if (res.status === 405) {
+    const q = new URLSearchParams(Object.entries(body || {}));
+    res = await fetch(`${path}?${q.toString()}`, { method: "GET" });
+  }
   const text = await res.text();
   let json; try { json = JSON.parse(text); } catch { json = { raw: text }; }
-  if (!res.ok) throw new Error(json?.error || json?.detail || text || `HTTP ${res.status}`);
+  if (!res.ok) throw new Error(json?.error || text || `HTTP ${res.status}`);
   return json;
 }
 const s = (v) => (v===null||v===undefined) ? "" : String(v);
