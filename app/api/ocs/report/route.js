@@ -16,86 +16,86 @@ async function callOCS(body) {
   return json;
 }
 
-function get(obj, path, dflt = null) {
-  try { return path.split(".").reduce((o, k) => (o && k in o ? o[k] : null), obj) ?? dflt; }
+function get(obj, path, dflt=null){
+  try { return path.split(".").reduce((o,k)=> (o && k in o ? o[k] : null), obj) ?? dflt; }
   catch { return dflt; }
 }
 
-function buildWeeks(startStr, endStr) {
-  const start = new Date(startStr + "T00:00:00Z");
-  const end = endStr ? new Date(endStr + "T00:00:00Z") : new Date();
+function buildWeeks(startStr, endStr){
+  const start = new Date(startStr+"T00:00:00Z");
+  const end = endStr ? new Date(endStr+"T00:00:00Z") : new Date();
   const weeks = [];
   let cur = start;
-  while (cur <= end) {
-    const e = new Date(cur); e.setUTCDate(e.getUTCDate() + 6);
+  while (cur <= end){
+    const e = new Date(cur); e.setUTCDate(e.getUTCDate()+6);
     const ee = e > end ? end : e;
-    weeks.push([cur.toISOString().slice(0, 10), ee.toISOString().slice(0, 10)]);
-    const n = new Date(cur); n.setUTCDate(n.getUTCDate() + 7); cur = n;
+    weeks.push([cur.toISOString().slice(0,10), ee.toISOString().slice(0,10)]);
+    const n = new Date(cur); n.setUTCDate(n.getUTCDate()+7); cur = n;
   }
   return weeks;
 }
 
-async function poolAll(items, limit, fn) {
-  const ret = [];
-  const executing = new Set();
-  for (const item of items) {
-    const p = Promise.resolve().then(() => fn(item));
-    ret.push(p); executing.add(p);
-    const clean = () => executing.delete(p);
-    p.then(clean).catch(clean);
-    if (executing.size >= limit) await Promise.race(executing);
+async function poolAll(items, limit, fn){
+  const ret=[], running=new Set();
+  for (const it of items){
+    const p = Promise.resolve().then(()=>fn(it));
+    ret.push(p); running.add(p);
+    const done = ()=>running.delete(p);
+    p.then(done).catch(done);
+    if (running.size >= limit) await Promise.race(running);
   }
   return Promise.all(ret);
 }
 
-async function makeReport({ accountId, startDate, endDate }) {
-  const acct = Number(accountId) || 3771;
+async function makeReport({ accountId, startDate, endDate }){
+  const acct = Number(accountId)||3771;
   const start = startDate || "2025-06-01";
-  const end = endDate || new Date().toISOString().slice(0, 10);
+  const end   = endDate   || new Date().toISOString().slice(0,10);
   const weeks = buildWeeks(start, end);
 
-  // 1) list subscribers
-  const listResp = await callOCS({ listSubscriber: { accountId: acct } });
-  const subscribers = get(listResp, "listSubscriber.subscriberList", []);
-  if (!Array.isArray(subscribers)) return { rows: [], columns: [], note: listResp };
+  const list = await callOCS({ listSubscriber: { accountId: acct } });
+  const subs = get(list, "listSubscriber.subscriberList", []);
+  if (!Array.isArray(subs)) return { rows:[], columns:[], note:list };
 
-  // 2) enrich
-  const rows = [];
-  await poolAll(subscribers, 4, async (sub) => {
-    const subId = sub?.subscriberId;
-    const iccid = Array.isArray(sub?.imsiList) ? (sub.imsiList[0]?.iccid || "") : "";
+  const rows=[];
+  await poolAll(subs, 4, async (s)=>{
+    const subId = s?.subscriberId;
+    const iccid = Array.isArray(s?.imsiList) ? (s.imsiList[0]?.iccid || "") : "";
 
-    let packages = [];
+    // packages
+    let pkgs=[];
     try {
-      const pkgJson = await callOCS({ listSubscriberPrepaidPackages: { subscriberId: subId } });
-      packages = get(pkgJson, "listSubscriberPrepaidPackages.packages", []);
+      const r = await callOCS({ listSubscriberPrepaidPackages: { subscriberId: subId }});
+      pkgs = get(r, "listSubscriberPrepaidPackages.packages", []);
     } catch {}
 
+    // last usage by ICCID
     let lastUsageDate = "";
-    if (iccid) {
+    if (iccid){
       try {
-        const lastJson = await callOCS({ getSingleSubscriber: { iccid } });
-        lastUsageDate = get(lastJson, "getSingleSubscriber.lastUsageDate", "") || "";
+        const r = await callOCS({ getSingleSubscriber: { iccid }});
+        lastUsageDate = get(r, "getSingleSubscriber.lastUsageDate", "") || "";
       } catch {}
     }
 
+    // weekly usage & costs
     const weekly = {};
-    for (const [ws, we] of weeks) {
+    for (const [ws,we] of weeks){
       const kU = `usedData_${ws}_to_${we}`;
       const kR = `resellerCost_${ws}_to_${we}`;
       const kS = `subscriberCost_${ws}_to_${we}`;
-      try {
-        const uJson = await callOCS({
-          subscriberUsageOverPeriod: { subscriber: { subscriberId: subId }, period: { start: ws, end: we } }
+      try{
+        const r = await callOCS({
+          subscriberUsageOverPeriod: { subscriber:{ subscriberId: subId }, period:{ start: ws, end: we } }
         });
-        const u = uJson?.subscriberUsageOverPeriod || {};
+        const u = r?.subscriberUsageOverPeriod || {};
         const total = u?.total || {};
-        const records = u?.usages || u?.usage || [];
-        let used = 0;
-        if (Array.isArray(records)) {
-          for (const r of records) {
-            const v = r?.quantity ?? r?.usedDataByte ?? r?.useddatabyte ?? 0;
-            used += typeof v === "number" ? v : Number(v || 0);
+        const recs  = u?.usages || u?.usage || [];
+        let used=0;
+        if (Array.isArray(recs)){
+          for (const x of recs){
+            const v = x?.quantity ?? x?.usedDataByte ?? x?.useddatabyte ?? 0;
+            used += (typeof v === "number") ? v : Number(v||0);
           }
         }
         weekly[kU] = used;
@@ -106,7 +106,7 @@ async function makeReport({ accountId, startDate, endDate }) {
       }
     }
 
-    if (!Array.isArray(packages) || packages.length === 0) {
+    if (!Array.isArray(pkgs) || pkgs.length===0){
       rows.push({
         subscriberId: subId, iccid, lastUsageDate,
         subscriberPrepaidPackageId: "", prepaidPackageTemplateId: "", templateName: "",
@@ -114,43 +114,43 @@ async function makeReport({ accountId, startDate, endDate }) {
         activationDate: "", expiryDate: "", ...weekly
       });
     } else {
-      for (const pkg of packages) {
-        const tpl = pkg?.packageTemplate || {};
+      for (const p of pkgs){
+        const tpl = p?.packageTemplate || {};
         rows.push({
           subscriberId: subId, iccid, lastUsageDate,
-          subscriberPrepaidPackageId: pkg?.subscriberprepaidpackageid ?? pkg?.subscriberPrepaidPackageId ?? "",
+          subscriberPrepaidPackageId: p?.subscriberprepaidpackageid ?? p?.subscriberPrepaidPackageId ?? "",
           prepaidPackageTemplateId: tpl?.prepaidpackagetemplateid ?? "",
           templateName: tpl?.prepaidpackagetemplatename ?? "",
-          subscriberCost: pkg?.cost ?? "",
-          resellerCost: pkg?.resellercost ?? pkg?.resellerCost ?? "",
-          usedDataByte: pkg?.useddatabyte ?? "",
-          pckDataByte: pkg?.pckdatabyte ?? "",
-          activationDate: pkg?.tstartactivationutc ?? "",
-          expiryDate: pkg?.tsexpirationutc ?? "",
+          subscriberCost: p?.cost ?? "",
+          resellerCost: p?.resellercost ?? p?.resellerCost ?? "",
+          usedDataByte: p?.useddatabyte ?? "",
+          pckDataByte: p?.pckdatabyte ?? "",
+          activationDate: p?.tstartactivationutc ?? "",
+          expiryDate: p?.tsexpirationutc ?? "",
           ...weekly
         });
       }
     }
   });
 
-  const baseOrder = [
+  const base = [
     "subscriberId","iccid","lastUsageDate",
     "subscriberPrepaidPackageId","prepaidPackageTemplateId","templateName",
     "subscriberCost","resellerCost","usedDataByte","pckDataByte",
     "activationDate","expiryDate"
   ];
-  const allKeys = Array.from(rows.reduce((set, r) => { Object.keys(r).forEach(k => set.add(k)); return set; }, new Set()));
-  const weeklyKeys = allKeys.filter(k => k.startsWith("usedData_") || k.startsWith("resellerCost_") || k.startsWith("subscriberCost_")).sort();
-  const otherKeys  = allKeys.filter(k => !baseOrder.includes(k) && !weeklyKeys.includes(k));
-  const columns = [...baseOrder, ...otherKeys, ...weeklyKeys];
+  const keys = Array.from(rows.reduce((set,r)=>{ Object.keys(r).forEach(k=>set.add(k)); return set; }, new Set()));
+  const weekly = keys.filter(k=>k.startsWith("usedData_")||k.startsWith("resellerCost_")||k.startsWith("subscriberCost_")).sort();
+  const others = keys.filter(k=>!base.includes(k) && !weekly.includes(k));
+  const columns = [...base, ...others, ...weekly];
 
   return { rows, columns, count: rows.length, weeks, accountId: acct };
 }
 
-// POST handler
-export async function POST(req) {
+// POST (normal path)
+export async function POST(req){
   try {
-    const body = await req.json().catch(() => ({}));
+    const body = await req.json().catch(()=> ({}));
     const data = await makeReport(body || {});
     return NextResponse.json(data);
   } catch (e) {
@@ -158,8 +158,8 @@ export async function POST(req) {
   }
 }
 
-// GET handler (fallback)
-export async function GET(req) {
+// GET (fallback, so 405 never happens)
+export async function GET(req){
   const { searchParams } = new URL(req.url);
   const accountId = searchParams.get("accountId") || "3771";
   const startDate = searchParams.get("startDate") || "2025-06-01";
