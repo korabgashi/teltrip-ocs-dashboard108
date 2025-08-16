@@ -3,9 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 
-/* ---------------- helpers ---------------- */
+/* ───────────────────────── helpers ───────────────────────── */
 async function postJSON(path, body) {
-  // Try POST first, fall back to GET if 405
+  // Try POST first; some hosts require GET for simple routes
   let res = await fetch(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -27,16 +27,17 @@ const n = (v) => {
   const num = typeof v === "number" ? v : Number(v ?? 0);
   return Number.isFinite(num) ? num : 0;
 };
-const money = (v) => n(v).toFixed(2);
+
+// € formatter (no locale assumptions about comma/point—always shows € and 2 decimals)
+const euro = (v) => `€${n(v).toFixed(2)}`;
 const pct1  = (v) => `${n(v).toFixed(1)}%`;
 
 function bytesToGB(val) {
-  const num = n(val);
-  return `${(num / (1024 ** 3)).toFixed(2)} GB`;
+  return `${(n(val) / (1024 ** 3)).toFixed(2)} GB`;
 }
 
-/* ---------------- styles ---------------- */
-const wrap = { maxWidth: 1280, margin: "0 auto", padding: "24px" };
+/* ───────────────────────── styles ───────────────────────── */
+const wrap = { maxWidth: 1280, margin: "0 auto", padding: 24 };
 const card = { background: "#151a2e", borderRadius: 16, padding: 16 };
 const kpiNum = { fontSize: 28, fontWeight: 700, color: "#e9ecf1" };
 
@@ -59,13 +60,12 @@ const thSub = {
 };
 const tdBase = {
   padding: "8px 12px", borderBottom: "1px solid #2a3356",
-  whiteSpace: "nowrap", verticalAlign: "middle",
-  color: "#e9ecf1",
+  whiteSpace: "nowrap", verticalAlign: "middle", color: "#e9ecf1",
 };
 const tdMono  = { ...tdBase, fontFamily: "ui-monospace,SFMono-Regular,Menlo,Monaco" };
 const tdRight = { ...tdBase, textAlign: "right" };
 
-/* ---------------- page ---------------- */
+/* ───────────────────────── page ───────────────────────── */
 export default function Dashboard() {
   const [accountId, setAccountId] = useState(3771);
   const [listData, setListData] = useState([]);
@@ -74,7 +74,7 @@ export default function Dashboard() {
   const [loadingReport, setLoadingReport] = useState(false);
   const [error, setError] = useState("");
 
-  // KPIs (quick)
+  // Quick list for KPIs
   const loadList = async () => {
     setLoading(true); setError("");
     try {
@@ -86,7 +86,7 @@ export default function Dashboard() {
     } finally { setLoading(false); }
   };
 
-  // Detailed report (where the math happens)
+  // Detailed report (packages, weekly usage, costs)
   const loadReport = async () => {
     setLoadingReport(true); setError("");
     try {
@@ -94,23 +94,22 @@ export default function Dashboard() {
       const incomingCols = json.columns || [];
       const rawRows = Array.isArray(json.rows) ? json.rows : [];
 
-      // weekly reseller cost columns and weekly used-data columns
+      // Detect weekly columns from the dataset
       const weeklyResCols  = incomingCols.filter((c) => /^resellerCost_/.test(c));
       const weeklyUsedCols = incomingCols.filter((c) => /^usedData_/.test(c));
 
       const enhanced = rawRows.map((r) => {
-        // sum weekly reseller costs
-        const resellerWeeklyTotal   = weeklyResCols.reduce((acc, k) => acc + n(r[k]), 0);
-        const usedWeeklyTotalBytes  = weeklyUsedCols.reduce((acc, k) => acc + n(r[k]), 0);
+        const resellerWeeklyTotal = weeklyResCols.reduce((acc, k) => acc + n(r[k]), 0);
+        const usedWeeklyTotalBytes = weeklyUsedCols.reduce((acc, k) => acc + n(r[k]), 0);
 
-        // numeric costs (always numbers)
         const subscriberCost = n(r.subscriberCost);
-        const resellerCost   = n(r.resellerCost); // kept for display/debug if you keep the column
+        const resellerCost   = n(r.resellerCost); // base cost, optional to display
 
-        // ✅ Profit/Loss uses *weekly* reseller cost
+        // ✅ Correct calculation in EUROS:
+        // Profit/Loss = subscriberCost − resellerCostWeeklyTotal
         const profit = subscriberCost - resellerWeeklyTotal;
 
-        // Margin based on subscriber price
+        // Margin (%) = profit / subscriberCost * 100
         const margin = subscriberCost > 0 ? (profit / subscriberCost) * 100 : 0;
 
         return {
@@ -124,17 +123,17 @@ export default function Dashboard() {
           activationDate: s(r.activationDate || r.tstartactivationutc || ""),
           expiryDate: s(r.expiryDate || r.tsexpirationutc || ""),
 
-          // Usage
+          // Usage (bytes numeric; formatted on render)
           usedDataByte: n(r.usedDataByte),
           pckDataByte: n(r.pckDataByte),
           usedDataWeeklyTotalBytes: usedWeeklyTotalBytes,
 
           // Costs & results
           subscriberCost,
-          resellerCost,
+          resellerCost,                        // optional display
           resellerCostWeeklyTotal: resellerWeeklyTotal,
-          profit,
-          margin,
+          profit,                               // can be negative
+          margin,                               // number
         };
       });
 
@@ -182,36 +181,35 @@ export default function Dashboard() {
       ],
     },
     {
-      title: "Costs",
+      title: "Costs (EUR)",
       cols: [
-        { key: "subscriberCost",         label: "Subscriber Cost",         style: tdRight, fmt: (v)=>`$${money(v)}` },
-        { key: "resellerCostWeeklyTotal",label: "Reseller Cost (Weekly)",  style: tdRight, fmt: (v)=>`$${money(v)}` },
-        // keep base resellerCost if you still want to see it (optional):
-        // { key: "resellerCost",           label: "Reseller Cost (Base)",   style: tdRight, fmt: (v)=>`$${money(v)}` },
-        { key: "profit",                 label: "Profit/Loss ($)",         style: tdRight, fmt: (v)=>`$${money(v)}` },
-        { key: "margin",                 label: "Margin (%)",              style: tdRight, fmt: (v)=>pct1(v) },
+        { key: "subscriberCost",         label: "Subscriber Cost",        style: tdRight, fmt: (v)=>euro(v) },
+        { key: "resellerCost",           label: "Reseller Cost",          style: tdRight, fmt: (v)=>euro(v) }, // optional base
+        { key: "resellerCostWeeklyTotal",label: "Reseller Cost (Weekly)", style: tdRight, fmt: (v)=>euro(v) },
+        { key: "profit",                 label: "Profit/Loss (€)",        style: tdRight, fmt: (v)=>euro(v) },
+        { key: "margin",                 label: "Margin (%)",             style: tdRight, fmt: (v)=>pct1(v) },
       ],
     },
   ];
 
   const allCols = groups.flatMap((g) => g.cols);
 
-  // Optional: quick totals line for verification
+  // Totals row (helps you verify)
   const totals = useMemo(() => {
     return rows.reduce(
       (acc, r) => {
-        acc.subscriberCost += n(r.subscriberCost);
-        acc.resellerWeekly += n(r.resellerCostWeeklyTotal);
-        acc.profit         += n(r.profit);
+        acc.subscriber += n(r.subscriberCost);
+        acc.resWeekly  += n(r.resellerCostWeeklyTotal);
+        acc.profit     += n(r.profit);
         return acc;
       },
-      { subscriberCost: 0, resellerWeekly: 0, profit: 0 }
+      { subscriber: 0, resWeekly: 0, profit: 0 }
     );
   }, [rows]);
 
   return (
     <div style={wrap}>
-      {/* Top bar with logo & controls */}
+      {/* Top—logo & controls */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap", marginBottom: 16 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <Image src="/teltrip-logo.png" alt="Teltrip" width={160} height={40} priority />
@@ -262,19 +260,19 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Table */}
+      {/* Main table */}
       <div style={tableShell}>
         <table style={table}>
           <thead>
-            {/* Group header row */}
+            {/* Group headers */}
             <tr>
               {groups.map((g, idx) => (
-                <th key={`g-${idx}`} style={{ ...thTopGroup }} colSpan={g.cols.length}>
+                <th key={`g-${idx}`} style={thTopGroup} colSpan={g.cols.length}>
                   {g.title}
                 </th>
               ))}
             </tr>
-            {/* Column header row */}
+            {/* Column headers */}
             <tr>
               {allCols.map((c) => (
                 <th key={`h-${c.key}`} style={thSub}>
@@ -292,7 +290,7 @@ export default function Dashboard() {
                   const val = c.fmt ? c.fmt(raw) : s(raw);
                   const style = c.style || tdBase;
 
-                  // color profit & margin
+                  // color profit & margin cells
                   const colorize =
                     (c.key === "profit" || c.key === "margin")
                       ? { color: n(raw) < 0 ? "#ef4444" : "#22c55e", fontWeight: 700 }
@@ -307,27 +305,35 @@ export default function Dashboard() {
               </tr>
             ))}
 
-            {/* Totals row (helps verify numbers) */}
+            {/* Totals row */}
             {rows.length > 0 && (
               <tr style={{ background: "#0f1428" }}>
-                {/* span to align under costs group */}
-                <td colSpan={groups[0].cols.length + groups[1].cols.length + groups[2].cols.length} style={{ ...tdBase, fontWeight: 700 }}>
+                <td
+                  colSpan={
+                    groups[0].cols.length + groups[1].cols.length + groups[2].cols.length
+                  }
+                  style={{ ...tdBase, fontWeight: 700 }}
+                >
                   Totals
                 </td>
-                {/* subscriberCost total */}
-                <td style={{ ...tdRight, fontWeight: 700 }}>{`$${money(totals.subscriberCost)}`}</td>
-                {/* reseller weekly total */}
-                <td style={{ ...tdRight, fontWeight: 700 }}>{`$${money(totals.resellerWeekly)}`}</td>
-                {/* If you kept base resellerCost column, add an empty cell here */}
-                {/* profit total */}
-                <td style={{ ...tdRight, fontWeight: 700, color: totals.profit < 0 ? "#ef4444" : "#22c55e" }}>
-                  {`$${money(totals.profit)}`}
+                <td style={{ ...tdRight, fontWeight: 700 }}>{euro(totals.subscriber)}</td>
+                <td style={{ ...tdRight, fontWeight: 700 }}>{euro(0) /* base reseller (optional column) */}</td>
+                <td style={{ ...tdRight, fontWeight: 700 }}>{euro(totals.resWeekly)}</td>
+                <td style={{
+                  ...tdRight, fontWeight: 700,
+                  color: totals.profit < 0 ? "#ef4444" : "#22c55e"
+                }}>
+                  {euro(totals.profit)}
                 </td>
-                {/* average margin */}
                 <td style={{ ...tdRight, fontWeight: 700 }}>
-                  {pct1(
-                    rows.reduce((acc, r) => acc + (n(r.subscriberCost) > 0 ? (n(r.profit) / n(r.subscriberCost)) * 100 : 0), 0) / rows.length
-                  )}
+                  {
+                    pct1(
+                      rows.reduce(
+                        (acc, r) => acc + (n(r.subscriberCost) > 0 ? (n(r.profit) / n(r.subscriberCost)) * 100 : 0),
+                        0
+                      ) / rows.length
+                    )
+                  }
                 </td>
               </tr>
             )}
