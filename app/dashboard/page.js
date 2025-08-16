@@ -11,7 +11,7 @@ async function postJSON(path, body) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  // Some platforms might return 405; retry with GET
+  // Fallback to GET if platform returns 405
   if (res.status === 405) {
     const q = new URLSearchParams(Object.entries(body || {}));
     res = await fetch(`${path}?${q.toString()}`, { method: "GET" });
@@ -24,12 +24,15 @@ async function postJSON(path, body) {
 }
 
 const s = (v) => (v === null || v === undefined ? "" : String(v));
-const n = (v) => (typeof v === "number" ? v : Number(v || 0));
-const money = (v) => (Number.isFinite(n(v)) ? n(v).toFixed(2) : s(v));
+const n = (v) => {
+  const num = typeof v === "number" ? v : Number(v ?? 0);
+  return Number.isFinite(num) ? num : 0;
+};
+const money = (v) => n(v).toFixed(2);
 
 function bytesToGB(val) {
   const num = n(val);
-  if (!Number.isFinite(num) || num === 0) return "0.00 GB";
+  if (num === 0) return "0.00 GB";
   return (num / (1024 ** 3)).toFixed(2) + " GB";
 }
 
@@ -37,20 +40,32 @@ function bytesToGB(val) {
 const wrap = { maxWidth: 1280, margin: "0 auto", padding: "24px" };
 const card = { background: "#151a2e", borderRadius: 16, padding: 16 };
 const kpiNum = { fontSize: 28, fontWeight: 700 };
+
 const tableShell = { ...card, padding: 0, overflowX: "auto" };
 const table = { width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 13 };
+
 const thTopGroup = {
-  position: "sticky", top: 0, zIndex: 3, background: "#12172a", color: "#e9ecf1",
-  textAlign: "left", fontWeight: 800, padding: "10px 12px", borderBottom: "1px solid #2a3356", whiteSpace: "nowrap",
+  position: "sticky", top: 0, zIndex: 3,
+  background: "#12172a", color: "#e9ecf1",
+  textAlign: "left", fontWeight: 800,
+  padding: "10px 12px", borderBottom: "1px solid #2a3356",
+  whiteSpace: "nowrap",
 };
+
 const thSub = {
-  position: "sticky", top: 42, zIndex: 2, background: "#12172a", color: "#e9ecf1",
-  textAlign: "left", fontWeight: 700, padding: "10px 12px", borderBottom: "1px solid #2a3356", whiteSpace: "nowrap",
+  position: "sticky", top: 42, zIndex: 2,
+  background: "#12172a", color: "#e9ecf1",
+  textAlign: "left", fontWeight: 700,
+  padding: "10px 12px", borderBottom: "1px solid #2a3356",
+  whiteSpace: "nowrap",
 };
+
 const tdBase = {
-  padding: "8px 12px", borderBottom: "1px solid #2a3356", whiteSpace: "nowrap", verticalAlign: "middle",
+  padding: "8px 12px", borderBottom: "1px solid #2a3356",
+  whiteSpace: "nowrap", verticalAlign: "middle",
+  color: "#e9ecf1",
 };
-const tdMono = { ...tdBase, fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco" };
+const tdMono  = { ...tdBase, fontFamily: "ui-monospace,SFMono-Regular,Menlo,Monaco" };
 const tdRight = { ...tdBase, textAlign: "right" };
 
 /* ---------------- page ---------------- */
@@ -62,7 +77,7 @@ export default function Dashboard() {
   const [loadingReport, setLoadingReport] = useState(false);
   const [error, setError] = useState("");
 
-  // KPIs (quick)
+  // KPIs (quick list)
   const loadList = async () => {
     setLoading(true); setError("");
     try {
@@ -74,11 +89,15 @@ export default function Dashboard() {
     } finally { setLoading(false); }
   };
 
-  // Detailed report for table
+  // Detailed report
   const loadReport = async () => {
     setLoadingReport(true); setError("");
     try {
-      const json = await postJSON("/api/ocs/report", { accountId, startDate: "2025-06-01" });
+      const json = await postJSON("/api/ocs/report", {
+        accountId,
+        startDate: "2025-06-01",
+      });
+
       const incomingCols = json.columns || [];
       const rawRows = Array.isArray(json.rows) ? json.rows : [];
 
@@ -86,14 +105,19 @@ export default function Dashboard() {
       const weeklyUsedCols = incomingCols.filter((c) => c.startsWith("usedData_"));
 
       const enhanced = rawRows.map((r) => {
-        const resellerWeeklyTotal = weeklyResCols.reduce((acc, k) => acc + (Number(r[k] ?? 0) || 0), 0);
-        const usedWeeklyTotalBytes = weeklyUsedCols.reduce((acc, k) => acc + (Number(r[k] ?? 0) || 0), 0);
+        // weekly totals
+        const resellerWeeklyTotal = weeklyResCols.reduce((acc, k) => acc + n(r[k]), 0);
+        const usedWeeklyTotalBytes = weeklyUsedCols.reduce((acc, k) => acc + n(r[k]), 0);
 
-        const subscriberCost = r.subscriberCost === "" ? "" : n(r.subscriberCost || 0);
-        const resellerCost   = r.resellerCost   === "" ? "" : n(r.resellerCost   || 0);
-        const profit = subscriberCost === "" || resellerCost === "" ? "" : subscriberCost - resellerCost;
-        const margin = (resellerCost && resellerCost !== 0 && profit !== "")
-          ? ((profit / resellerCost) * 100) : "";
+        // numeric costs
+        const subscriberCost = n(r.subscriberCost);
+        const resellerCost   = n(r.resellerCost);
+
+        // Profit/Loss (your requested formula): reseller - subscriber
+        const profit = resellerCost - subscriberCost;
+
+        // Margin %: (profit / reseller) * 100 (0 if reseller 0)
+        const margin = resellerCost !== 0 ? (profit / resellerCost) * 100 : 0;
 
         return {
           // Subscriber
@@ -106,17 +130,17 @@ export default function Dashboard() {
           activationDate: s(r.activationDate || r.tstartactivationutc || ""),
           expiryDate: s(r.expiryDate || r.tsexpirationutc || ""),
 
-          // Usage (bytes kept numeric; format in render)
-          usedDataByte: n(r.usedDataByte || 0),
-          pckDataByte: n(r.pckDataByte || 0),
+          // Usage (bytes kept numeric; formatted in render)
+          usedDataByte: n(r.usedDataByte),
+          pckDataByte: n(r.pckDataByte),
           usedDataWeeklyTotalBytes: usedWeeklyTotalBytes,
 
           // Costs + P/L
           subscriberCost,
           resellerCost,
           resellerCostWeeklyTotal: resellerWeeklyTotal,
-          profit, // $ difference
-          margin, // %
+          profit,   // can be negative
+          margin,   // number
         };
       });
 
@@ -128,6 +152,7 @@ export default function Dashboard() {
 
   useEffect(() => { loadList(); }, []);
 
+  // KPIs
   const kpis = useMemo(() => {
     const total = listData.length;
     const active = listData.filter(
@@ -141,9 +166,9 @@ export default function Dashboard() {
     {
       title: "Subscriber",
       cols: [
-        { key: "subscriberId", label: "Subscriber ID", style: tdBase },
-        { key: "iccid",        label: "ICCID",         style: tdMono },
-        { key: "lastUsageDate",label: "Last Usage",    style: tdMono },
+        { key: "subscriberId",  label: "Subscriber ID", style: tdBase },
+        { key: "iccid",         label: "ICCID",         style: tdMono },
+        { key: "lastUsageDate", label: "Last Usage",    style: tdMono },
       ],
     },
     {
@@ -157,21 +182,19 @@ export default function Dashboard() {
     {
       title: "Usage",
       cols: [
-        { key: "usedDataByte",            label: "Used (Package)",    style: tdRight, fmt: (v)=>bytesToGB(v) },
-        { key: "pckDataByte",             label: "Package Size",      style: tdRight, fmt: (v)=>bytesToGB(v) },
-        { key: "usedDataWeeklyTotalBytes",label: "Used (Weekly Tot.)",style: tdRight, fmt: (v)=>bytesToGB(v) },
+        { key: "usedDataByte",            label: "Used (Package)",     style: tdRight, fmt: (v)=>bytesToGB(v) },
+        { key: "pckDataByte",             label: "Package Size",       style: tdRight, fmt: (v)=>bytesToGB(v) },
+        { key: "usedDataWeeklyTotalBytes",label: "Used (Weekly Tot.)", style: tdRight, fmt: (v)=>bytesToGB(v) },
       ],
     },
     {
       title: "Costs",
       cols: [
-        { key: "subscriberCost",         label: "Subscriber Cost",        style: tdRight, fmt: (v)=>v===""?"":`$${money(v)}` },
-        { key: "resellerCost",           label: "Reseller Cost",          style: tdRight, fmt: (v)=>v===""?"":`$${money(v)}` },
+        { key: "subscriberCost",         label: "Subscriber Cost",        style: tdRight, fmt: (v)=>`$${money(v)}` },
+        { key: "resellerCost",           label: "Reseller Cost",          style: tdRight, fmt: (v)=>`$${money(v)}` },
         { key: "resellerCostWeeklyTotal",label: "Reseller Cost (Weekly)", style: tdRight, fmt: (v)=>`$${money(v)}` },
-        { key: "profit",                 label: "Profit/Loss ($)",        style: tdRight,
-          fmt: (v)=> v==="" ? "" : (n(v) >= 0 ? `+$${money(v)}` : `-$${money(Math.abs(n(v)))}`) },
-        { key: "margin",                 label: "Margin (%)",             style: tdRight,
-          fmt: (v)=> v==="" ? "" : `${n(v).toFixed(1)}%` },
+        { key: "profit",                 label: "Profit/Loss ($)",        style: tdRight, fmt: (v)=>`$${money(v)}` },
+        { key: "margin",                 label: "Margin (%)",             style: tdRight, fmt: (v)=>`${n(v).toFixed(1)}%` },
       ],
     },
   ];
@@ -184,7 +207,7 @@ export default function Dashboard() {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap", marginBottom: 16 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <Image src="/teltrip-logo.png" alt="Teltrip" width={160} height={40} priority />
-          <h1 style={{ fontSize: 24, fontWeight: 800 }}>OCS Dashboard</h1>
+          <h1 style={{ fontSize: 24, fontWeight: 800, color: "#e9ecf1" }}>OCS Dashboard</h1>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           <input
@@ -218,15 +241,15 @@ export default function Dashboard() {
       {/* KPIs */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, marginBottom: 16 }}>
         <div style={card}>
-          <div style={{ opacity: 0.7 }}>Total Subscribers</div>
+          <div style={{ opacity: 0.7, color: "#cfd5e1" }}>Total Subscribers</div>
           <div style={kpiNum}>{kpis.total}</div>
         </div>
         <div style={card}>
-          <div style={{ opacity: 0.7 }}>Active</div>
+          <div style={{ opacity: 0.7, color: "#cfd5e1" }}>Active</div>
           <div style={kpiNum}>{kpis.active}</div>
         </div>
         <div style={card}>
-          <div style={{ opacity: 0.7 }}>Inactive</div>
+          <div style={{ opacity: 0.7, color: "#cfd5e1" }}>Inactive</div>
           <div style={kpiNum}>{kpis.inactive}</div>
         </div>
       </div>
@@ -259,10 +282,13 @@ export default function Dashboard() {
                   const raw = r[c.key];
                   const val = c.fmt ? c.fmt(raw) : s(raw);
                   const style = c.style || tdBase;
+
+                  // colorize profit & margin
                   const colorize =
                     c.key === "profit" || c.key === "margin"
-                      ? { color: (raw !== "" && n(raw) < 0) ? "#ef4444" : (raw !== "" ? "#22c55e" : undefined), fontWeight: 700 }
+                      ? { color: n(raw) < 0 ? "#ef4444" : "#22c55e", fontWeight: 700 }
                       : null;
+
                   return (
                     <td key={`${i}-${c.key}`} title={s(raw)} style={{ ...style, ...colorize }}>
                       {val}
