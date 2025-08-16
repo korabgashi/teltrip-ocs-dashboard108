@@ -1,82 +1,31 @@
-"use client";
-
-import { useState, useEffect } from "react";
-import {
-  Table,
-  TableBody,
-  TableCaption,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import React, { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import teltripLogo from "./Asset4.png"; // <-- place your logo in the src/assets or public folder
 
-interface Subscriber {
-  subscriberId: string;
-  iccid: string;
-  lastUsage: string;
-  templateName: string;
-  tsactivationutc: string;
-  tsexpirationutc: string;
-  usedDataByte: number;
-  pckDataByte: number;
-  subscriberCost: number;
-  resellerCost: number;
-}
-
-export default function DashboardPage() {
-  const [subscribers, setSubscribers] = useState<Subscriber[]>([]);
+export default function Dashboard() {
+  const [subscribers, setSubscribers] = useState([]);
   const [accountId, setAccountId] = useState("3771");
-  const [totals, setTotals] = useState({
-    total: 0,
-    active: 0,
-    inactive: 0,
-    totalProfit: 0,
-  });
 
   const fetchData = async () => {
     try {
-      const res = await fetch(`/api/ocs-data?accountId=${accountId}`);
-      const data = await res.json();
-
-      const processed = data.map((s: Subscriber) => {
-        const usedGB = (s.usedDataByte / (1024 ** 3)).toFixed(2);
-        const totalGB = (s.pckDataByte / (1024 ** 3)).toFixed(2);
-
-        const profit = s.subscriberCost - s.resellerCost;
-        const margin =
-          s.resellerCost > 0 ? ((profit / s.resellerCost) * 100).toFixed(1) : "0";
-
-        return {
-          ...s,
-          usedGB,
-          totalGB,
-          profit: profit.toFixed(2),
-          margin,
-        };
+      const response = await fetch("/api/ocs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accountId }),
       });
+      const data = await response.json();
 
-      const totalProfit = processed.reduce(
-        (sum: number, s: any) => sum + parseFloat(s.profit),
-        0
-      );
+      // Convert bytes to GB and calculate profit/loss
+      const formatted = data.map((item) => ({
+        ...item,
+        usedGB: (item.usedDataByte / (1024 ** 3)).toFixed(2) + " GB",
+        packageGB: (item.pckDataByte / (1024 ** 3)).toFixed(2) + " GB",
+        profitLoss: (parseFloat(item.subscriberCost) - parseFloat(item.resellerCost)).toFixed(2),
+      }));
 
-      setSubscribers(processed);
-      setTotals({
-        total: processed.length,
-        active: processed.filter(
-          (s: any) => new Date(s.tsexpirationutc) > new Date()
-        ).length,
-        inactive: processed.filter(
-          (s: any) => new Date(s.tsexpirationutc) <= new Date()
-        ).length,
-        totalProfit,
-      });
+      setSubscribers(formatted);
     } catch (err) {
-      console.error("Error fetching data:", err);
+      console.error("Fetch failed:", err);
     }
   };
 
@@ -84,104 +33,84 @@ export default function DashboardPage() {
     fetchData();
   }, []);
 
-  return (
-    <div className="p-6 space-y-6">
-      <h1 className="text-2xl font-bold">OCS Dashboard</h1>
+  const totalSubscribers = subscribers.length;
+  const active = subscribers.filter((s) => new Date(s.expiryDate) > new Date()).length;
+  const inactive = totalSubscribers - active;
 
-      <div className="grid grid-cols-4 gap-4">
-        <Card>
-          <CardHeader>
-            <CardTitle>Total Subscribers</CardTitle>
-          </CardHeader>
-          <CardContent className="text-2xl">{totals.total}</CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle>Active</CardTitle>
-          </CardHeader>
-          <CardContent className="text-2xl">{totals.active}</CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle>Inactive</CardTitle>
-          </CardHeader>
-          <CardContent className="text-2xl">{totals.inactive}</CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle>Total Profit/Loss</CardTitle>
-          </CardHeader>
-          <CardContent className="text-2xl">
-            ${totals.totalProfit.toFixed(2)}
-          </CardContent>
-        </Card>
+  return (
+    <div className="min-h-screen bg-[#0f172a] text-white p-6">
+      {/* Logo */}
+      <div className="flex justify-start mb-6">
+        <img src={teltripLogo} alt="Teltrip Logo" className="h-12" />
       </div>
 
-      <div className="flex space-x-2">
-        <Input
+      {/* Header */}
+      <h1 className="text-3xl font-bold mb-6">OCS Dashboard</h1>
+
+      {/* Stats */}
+      <div className="grid grid-cols-3 gap-4 mb-8">
+        <div className="bg-gray-800 p-4 rounded-lg">
+          <p>Total Subscribers</p>
+          <h2 className="text-2xl font-bold">{totalSubscribers}</h2>
+        </div>
+        <div className="bg-gray-800 p-4 rounded-lg">
+          <p>Active</p>
+          <h2 className="text-2xl font-bold">{active}</h2>
+        </div>
+        <div className="bg-gray-800 p-4 rounded-lg">
+          <p>Inactive</p>
+          <h2 className="text-2xl font-bold">{inactive}</h2>
+        </div>
+      </div>
+
+      {/* Input + Buttons */}
+      <div className="flex gap-2 mb-6">
+        <input
           value={accountId}
           onChange={(e) => setAccountId(e.target.value)}
-          className="w-40"
+          className="px-3 py-2 rounded bg-gray-700 text-white"
         />
-        <Button onClick={fetchData}>Refresh</Button>
-        <Button className="bg-green-600 hover:bg-green-700">
-          Build Excel-like report
-        </Button>
+        <Button onClick={fetchData} className="bg-blue-600">Refresh</Button>
+        <Button className="bg-green-600">Build Excel-like report</Button>
       </div>
 
-      <Table>
-        <TableCaption>Subscribers & Packages</TableCaption>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Subscriber ID</TableHead>
-            <TableHead>ICCID</TableHead>
-            <TableHead>Last Usage</TableHead>
-            <TableHead>Template</TableHead>
-            <TableHead>Activated</TableHead>
-            <TableHead>Expires</TableHead>
-            <TableHead>Used (GB)</TableHead>
-            <TableHead>Package Size (GB)</TableHead>
-            <TableHead>Subscriber Cost ($)</TableHead>
-            <TableHead>Reseller Cost ($)</TableHead>
-            <TableHead>Profit/Loss ($)</TableHead>
-            <TableHead>Margin (%)</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {subscribers.map((s) => (
-            <TableRow key={s.subscriberId}>
-              <TableCell className="text-sm">{s.subscriberId}</TableCell>
-              <TableCell className="text-xs">{s.iccid}</TableCell>
-              <TableCell className="text-sm">{s.lastUsage}</TableCell>
-              <TableCell className="text-sm">{s.templateName}</TableCell>
-              <TableCell className="text-sm">{s.tsactivationutc}</TableCell>
-              <TableCell className="text-sm">{s.tsexpirationutc}</TableCell>
-              <TableCell className="text-sm">{s.usedGB} GB</TableCell>
-              <TableCell className="text-sm">{s.totalGB} GB</TableCell>
-              <TableCell className="text-sm">${s.subscriberCost}</TableCell>
-              <TableCell className="text-sm">${s.resellerCost}</TableCell>
-              <TableCell
-                className={`text-sm font-semibold ${
-                  parseFloat(s.profit) >= 0
-                    ? "text-green-500"
-                    : "text-red-500"
-                }`}
-              >
-                ${s.profit}
-              </TableCell>
-              <TableCell
-                className={`text-sm font-semibold ${
-                  parseFloat(s.margin) >= 0
-                    ? "text-green-500"
-                    : "text-red-500"
-                }`}
-              >
-                {s.margin}%
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+      {/* Table */}
+      <div className="overflow-x-auto">
+        <table className="table-auto w-full border-collapse text-sm">
+          <thead>
+            <tr className="bg-gray-900 text-left">
+              <th className="p-3">Subscriber ID</th>
+              <th className="p-3">ICCID</th>
+              <th className="p-3">Last Usage</th>
+              <th className="p-3">Template Name</th>
+              <th className="p-3">Activated</th>
+              <th className="p-3">Expires</th>
+              <th className="p-3">Used (GB)</th>
+              <th className="p-3">Package Size</th>
+              <th className="p-3">Subscriber Cost ($)</th>
+              <th className="p-3">Reseller Cost ($)</th>
+              <th className="p-3">Profit/Loss ($)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {subscribers.map((s, idx) => (
+              <tr key={idx} className="border-t border-gray-700">
+                <td className="p-3">{s.subscriberId}</td>
+                <td className="p-3 font-mono">{s.iccid}</td>
+                <td className="p-3">{s.lastUsage || "-"}</td>
+                <td className="p-3">{s.templateName}</td>
+                <td className="p-3">{s.activationDate}</td>
+                <td className="p-3">{s.expiryDate}</td>
+                <td className="p-3">{s.usedGB}</td>
+                <td className="p-3">{s.packageGB}</td>
+                <td className="p-3">{s.subscriberCost}</td>
+                <td className="p-3">{s.resellerCost}</td>
+                <td className="p-3">{s.profitLoss}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
