@@ -63,7 +63,7 @@ export default function DashboardPage() {
       {/* Logo */}
       <div className="flex items-center mb-6">
         <Image src={teltripLogo} alt="Teltrip Logo" width={160} height={60} />
-        <h1 className="text-2xl font-bold ml-4">OCS Dashboard</h1>
+        <h1 className="text-2xl font-bold ml-4">Dashboard</h1>
       </div>
 
       <div className="flex justify-between items-center mb-4">
